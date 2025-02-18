@@ -1,0 +1,261 @@
+from ctypes import Array
+import streamlit as st
+import pandas as pd
+import yfinance as yf
+from ta.volatility import BollingerBands
+from ta.trend import MACD, EMAIndicator, SMAIndicator, CCIIndicator
+import datetime
+from datetime import date
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import r2_score, mean_absolute_error
+from prophet import Prophet
+from prophet.plot import plot_plotly
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+import matplotlib.pyplot as plt
+from ta.momentum import RSIIndicator 
+from backtesting import Backtest, Strategy
+
+
+
+st.set_option('deprecation.showPyplotGlobalUse', False)
+
+st.title('Stock Price Predictions')
+st.sidebar.info('Welcome to the Algorithmic Trading Analysis. Choose your options below')
+st.sidebar.info('Major Project by Abhishek and Vivek')
+
+def crossover(series1, series2):
+    return (series1.shift(1) < series2.shift(1)) & (series1 >= series2)
+
+def main():
+    option = st.sidebar.selectbox('Make a choice', ['Visualize', 'Predict', 'Backtest'])
+    if option == 'Visualize':
+        tech_indicators()
+    elif option == 'Predict':
+        predict()
+    else:
+        backtest()
+
+
+@st.cache_resource
+def download_data(op, start_date, end_date):
+    df = yf.download(op, start=start_date, end=end_date, progress=False)
+    return df
+
+
+option = st.sidebar.text_input('Enter a Stock Symbol', value='SBIN.NS')
+option = option.upper()
+today = datetime.date.today()
+duration = st.sidebar.number_input('Training duration in Days', value=1800)
+before = today - datetime.timedelta(days=duration)
+start_date = st.sidebar.date_input('Start Date', value=before)
+end_date = st.sidebar.date_input('End date', today)
+if st.sidebar.button('Send'):
+    if start_date < end_date:
+        st.sidebar.success('Start date: `%s`\n\nEnd date: `%s`' % (start_date, end_date))
+        download_data(option, start_date, end_date)
+    else:
+        st.sidebar.error('Error: End date must fall after start date')
+
+
+data = download_data(option, start_date, end_date)
+scaler = StandardScaler()
+
+
+def tech_indicators():
+    st.header('Technical Indicators')
+    option = st.radio('Choose a Technical Indicator to Visualize',
+                      ['BB', 'MACD', 'RSI', 'SMA', 'EMA'])
+
+    if option == 'Close':
+        st.write('Close Price')
+        fig = px.line(data, x=data.index, y='Close', title='Close Price Over Time')
+        st.plotly_chart(fig)
+    elif option == 'BB':
+        st.write('Bollinger Bands')
+        bb_indicator = BollingerBands(data['Close'])
+        data['bb_h'] = bb_indicator.bollinger_hband()
+        data['bb_l'] = bb_indicator.bollinger_lband()
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=data.index, y=data['Close'], mode='lines', name='Close Price'))
+        fig.add_trace(go.Scatter(x=data.index, y=data['bb_h'], mode='lines', name='Bollinger High'))
+        fig.add_trace(go.Scatter(x=data.index, y=data['bb_l'], mode='lines', name='Bollinger Low'))
+        fig.update_layout(title='Bollinger Bands Over Time', xaxis_title='Date', yaxis_title='Price')
+        st.plotly_chart(fig)
+    elif option == 'MACD':
+        st.write('Moving Average Convergence Divergence')
+        macd = MACD(data['Close']).macd()
+        signal = MACD(data['Close']).macd_signal()
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=data.index, y=macd, mode='lines', name='MACD'))
+        fig.add_trace(go.Scatter(x=data.index, y=signal, mode='lines', name='Signal Line'))
+        fig.update_layout(title='MACD Over Time', xaxis_title='Date', yaxis_title='Value')
+        st.plotly_chart(fig)
+    elif option == 'RSI':
+        st.write('Relative Strength Index (RSI)')
+        window = st.slider('Select RSI window', min_value=1, max_value=100, value=14)
+        rsi = RSIIndicator(data['Close'], window=window).rsi()
+        st.line_chart(rsi)
+    elif option == 'SMA':
+        st.write('Simple Moving Average (SMA)')
+        period = st.slider('Select SMA period', min_value=1, max_value=100, value=20)
+        sma = SMAIndicator(data['Close'], window=period).sma_indicator()
+        st.line_chart(sma)
+    elif option == 'EMA':
+        st.write('Exponential Moving Average (EMA)')
+        span = st.slider('Select EMA span', min_value=1, max_value=100, value=20)
+        ema = EMAIndicator(data['Close'], window=span).ema_indicator()
+        st.line_chart(ema)
+    else:
+        st.write('Commodity Channel Index (CCI)')
+        cci = CCIIndicator(data['High'], data['Low'], data['Close']).cci()
+        fig = px.line(data, x=data.index, y=cci, title='CCI Over Time')
+        st.plotly_chart(fig)
+
+
+def predict():
+    model = st.radio('Model Used', ['Prophet'])
+    num = st.number_input('How many days forecast?', value=30)
+    num = int(num)
+
+    engine = Prophet()
+    model_engine_prophet(engine, num)
+
+def backtest():
+    st.header('Backtesting')
+
+    # Convert data to DataFrame if it's an _Array object
+    if isinstance(data, Array):
+        df = pd.DataFrame({'Close': data})
+    else:
+        df = data
+
+    class MyStrategy(Strategy):
+        def init(self):
+            pass
+
+        def next(self):
+            if crossover(df['Close'], df['Close'].rolling(20).mean()).any():
+                self.buy()
+            elif crossover(df['Close'].rolling(20).mean(), df['Close']).any():
+                self.sell()
+
+    bt = Backtest(df, MyStrategy)
+    stats = bt.run()
+
+    st.write(stats)
+
+    plt.figure(figsize=(10, 6))
+    bt.plot()
+    st.pyplot()
+
+
+
+def model_engine_prophet(model, num):
+    df = data[['Close']].reset_index()
+    df.columns = ['ds', 'y']
+
+    changepoint_prior_scale_values = [0.001, 0.01, 0.1]
+    seasonality_prior_scale_values = [1.0, 10.0, 20.0]
+    yearly_seasonality_values = [5, 10, 15]
+    weekly_seasonality_values = [2, 3, 4]
+    daily_seasonality_values = [False, True]
+
+    best_mae = float('inf')
+    best_params = {}
+
+    for changepoint_prior_scale in changepoint_prior_scale_values:
+        for seasonality_prior_scale in seasonality_prior_scale_values:
+            for yearly_seasonality in yearly_seasonality_values:
+                for weekly_seasonality in weekly_seasonality_values:
+                    for daily_seasonality in daily_seasonality_values:
+                        model = Prophet(
+                            changepoint_prior_scale=changepoint_prior_scale,
+                            seasonality_prior_scale=seasonality_prior_scale,
+                            yearly_seasonality=yearly_seasonality,
+                            weekly_seasonality=weekly_seasonality,
+                            daily_seasonality=daily_seasonality
+                        )
+
+                        try:
+                            model.fit(df)
+                            forecast = model.predict(future)
+                            preds = forecast['yhat'][-num:].values
+                            mae = mean_absolute_error(actual_values, preds)
+
+                            if mae < best_mae:
+                                best_mae = mae
+                                best_params = {
+                                    'changepoint_prior_scale': changepoint_prior_scale,
+                                    'seasonality_prior_scale': seasonality_prior_scale,
+                                    'yearly_seasonality': yearly_seasonality,
+                                    'weekly_seasonality': weekly_seasonality,
+                                    'daily_seasonality': daily_seasonality
+                                }
+                        except Exception as e:
+                            print(f"Error for parameters: {best_params}, Error message: {str(e)}")
+
+    print(f"Best Hyperparameters: {best_params}")
+    print(f"Best MAE: {best_mae}")
+
+    # Creating a dataframe for future dates
+    future = model.make_future_dataframe(periods=num)
+
+    # Making predictions
+    forecast = model.predict(future)
+
+    st.subheader('Prophet Model Predictions')
+
+    # Plotting Forecast
+    fig, ax = plt.subplots(figsize=(10, 6))
+    model.plot(forecast, ax=ax)
+    plt.title('Prophet Model Forecast')
+    plt.xlabel('Date')
+    plt.ylabel('Closing Price')
+    plt.legend(['Actual', 'Trend', 'Seasonal', 'Forecast'])
+    st.pyplot()
+
+    # Plotting Forecast
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=data.index, y=data['Close'], mode='lines', name='Actual'))
+    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], mode='lines', name='Forecast'))
+    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], mode='lines', name='Lower Bound'))
+    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], mode='lines', name='Upper Bound'))
+    fig.update_layout(title='Prophet Model Forecast', xaxis_title='Date', yaxis_title='Closing Price')
+    st.plotly_chart(fig)
+
+    # After making predictions with Prophet
+    predicted_values = forecast['yhat'].values[-num:]
+    actual_values = data['Close'][-num:].values
+    mae = mean_absolute_error(actual_values, predicted_values)
+    st.write(f'Mean Absolute Error (MAE): {mae}')
+
+    # Calculate Mean Absolute Percentage Error (MAPE)
+    mape = np.mean(np.abs((actual_values - predicted_values) / actual_values)) * 100
+    st.write(f'Mean Absolute Percentage Error (MAPE): {mape:.2f}%')
+
+    # Calculate Mean Percentage Scaled Error (MPSE)
+    mpse = np.mean(np.square((actual_values - predicted_values) / (0.5 * (actual_values + predicted_values)))) * 100
+    st.write(f'Mean Percentage Scaled Error (MPSE): {mpse:.2f}%')
+
+    # Displaying the forecasted values
+    st.subheader('Forecasted Values')
+    forecast_data = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(num)
+    st.write(forecast_data)
+
+    # Plotting Forecast Components
+    fig_components = model.plot_components(forecast)
+    st.pyplot(fig_components)
+
+    # Visualizing MAE and MPSE
+    plt.figure(figsize=(10, 6))
+    plt.bar(['MAE', 'MPSE'], [mae, mpse], color=['blue', 'orange'])
+    plt.title('Model Evaluation Metrics')
+    plt.ylabel('Value')
+    st.pyplot()
+
+
+if __name__ == '__main__':
+    main()
