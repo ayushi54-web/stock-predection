@@ -4,6 +4,9 @@ import numpy as np
 from tensorflow.keras.models import load_model
 from sklearn.preprocessing import MinMaxScaler
 import matplotlib.pyplot as plt
+import tensorflow as tf
+load_model = tf.keras.models.load_model
+
 
 # Load the trained model
 model = load_model("rnn_model.h5")
