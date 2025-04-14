@@ -4,9 +4,6 @@ import numpy as np
 from tensorflow.keras.models import load_model
 from sklearn.preprocessing import MinMaxScaler
 import matplotlib.pyplot as plt
-import tensorflow as tf
-load_model = tf.keras.models.load_model
-
 
 # Load the trained model
 model = load_model("rnn_model.h5")
@@ -59,15 +56,19 @@ if uploaded_file is not None:
             # Plot the predictions and the actual data
             st.write("### Predicted vs Actual Prices")
 
+            # Create the figure and axes explicitly
+            fig, ax = plt.subplots(figsize=(12, 6))
+
             # Plot actual vs predicted values
-            plt.figure(figsize=(12, 6))
-            plt.plot(data['Close'].iloc[prediction_days:].values, color='blue', label='Actual Prices')
-            plt.plot(predictions, color='red', label='Predicted Prices')
-            plt.title("Stock Price Prediction")
-            plt.xlabel("Time")
-            plt.ylabel("Price")
-            plt.legend()
-            st.pyplot()
+            ax.plot(data['Close'].iloc[prediction_days:].values, color='blue', label='Actual Prices')
+            ax.plot(predictions, color='red', label='Predicted Prices')
+            ax.set_title("Stock Price Prediction")
+            ax.set_xlabel("Time")
+            ax.set_ylabel("Price")
+            ax.legend()
+
+            # Show the plot using Streamlit
+            st.pyplot(fig)
 
             # Show the prediction values
             st.write("### Predicted Stock Prices", predictions)
