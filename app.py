@@ -75,8 +75,8 @@ else:
         ax.plot(stock_data['Close'].iloc[prediction_days:].values, color='blue', label='Actual Prices')
         ax.plot(predictions, color='red', label='Predicted Prices')
         ax.set_title(f"Stock Price Prediction for {selected_stock}")
-        ax.set_xlabel("Time")
-        ax.set_ylabel("Price")
+        ax.set_xlabel("Time (in second)")
+        ax.set_ylabel("Price (in rupees)")
         ax.legend()
         st.pyplot(fig)
 
